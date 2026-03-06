@@ -1,6 +1,6 @@
 # api-probe-batch workflow
 
-Declarative workflow for OpenAPI-first probing of authenticated API endpoints.
+Declarative workflow for OpenAPI-first endpoint probing. It codifies a safe probing order: establish same-origin browser context first, probe documentation/discovery paths next, and only then probe business endpoints.
 
 ## Entry File
 
@@ -12,13 +12,12 @@ Declarative workflow for OpenAPI-first probing of authenticated API endpoints.
 
 ## Structure
 
-This workflow fixes a best-practice probing order around the built-in `api_probe_batch` tool:
+This workflow wraps the built-in `api_probe_batch` tool with a repeatable operator flow:
 
-- `ToolNode`: navigate to the target app origin first
-- `ToolNode`: probe standard OpenAPI / Swagger discovery paths
-- `ToolNode`: probe business API paths configured by the operator
-- `ToolNode`: emit a final summary marker
-- `SequenceNode`: keep the whole orchestration deterministic
+- `page_navigate` to a same-origin app page so localStorage auth can be reused
+- First `api_probe_batch` call for standard OpenAPI / Swagger discovery paths
+- Second `api_probe_batch` call for configured business endpoints
+- `console_execute` summary step to mark completion for downstream runners
 
 ## Tools Used
 
@@ -28,20 +27,19 @@ This workflow fixes a best-practice probing order around the built-in `api_probe
 
 ## Config
 
-- `workflows.apiProbe.appUrl` — same-origin page used to inherit localStorage token
-- `workflows.apiProbe.baseUrl` — API base URL to probe
-- `workflows.apiProbe.method` — HTTP method for both discovery and target probes
-- `workflows.apiProbe.autoInjectAuth` — whether the built-in probe should auto-read bearer token from localStorage
-- `workflows.apiProbe.maxBodySnippetLength` — max response snippet length
-- `workflows.apiProbe.discoveryIncludeBodies` — whether discovery probes should include response body snippets
-- `workflows.apiProbe.targetPaths` — business API paths for the second phase
+- `workflows.apiProbe.appUrl`
+- `workflows.apiProbe.baseUrl`
+- `workflows.apiProbe.method`
+- `workflows.apiProbe.autoInjectAuth`
+- `workflows.apiProbe.maxBodySnippetLength`
+- `workflows.apiProbe.discoveryIncludeBodies`
+- `workflows.apiProbe.targetPaths`
 
 ## Local Validation
 
-1. Add this repo to the `jshookmcp` extension/workflow roots.
-2. Run `extensions_reload`.
-3. Confirm the workflow is listed in `extensions_list`.
-4. Trigger the workflow with a workflow runner and verify:
-   - it navigates to the configured app origin first
-   - discovery probing runs before business-path probing
-   - a summary step is emitted at the end
+1. Run `pnpm install`.
+2. Run `pnpm typecheck`.
+3. Put this repo under a configured `workflows/` extension root.
+4. Run `extensions_reload` in `jshookmcp`.
+5. Confirm the workflow appears in `extensions_list`.
+6. Execute the workflow and verify the order is `navigate -> discovery probe -> target probe -> summary`.
