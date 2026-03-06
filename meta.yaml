@@ -1,0 +1,4 @@
+name: api-probe-batch
+description: Declarative workflow for OpenAPI-first probing of authenticated API endpoints.
+author: vmoranv
+source_repo: https://github.com/vmoranv/jshook_workflow_api_probe_batch
