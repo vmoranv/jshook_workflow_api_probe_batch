@@ -116,7 +116,8 @@ const apiProbeBatchWorkflow: WorkflowContract = {
   defaultMaxConcurrency: 1,
 
   build(ctx) {
-    const appUrl = ctx.getConfig<string>('workflows.apiProbe.appUrl', 'https://example.com/');
+    const appUrl = ctx.getConfig<string>('workflows.apiProbe.appUrl', '');
+    if (!appUrl) throw new Error('[workflow.api-probe-batch] Missing required config: workflows.apiProbe.appUrl');
     const derivedBaseUrl = getOrigin(appUrl);
     const baseUrl = ctx.getConfig<string>('workflows.apiProbe.baseUrl', derivedBaseUrl);
     const method = ctx.getConfig<string>('workflows.apiProbe.method', 'GET');
