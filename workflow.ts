@@ -1,92 +1,5 @@
-type RetryPolicy = {
-  maxAttempts: number;
-  backoffMs: number;
-  multiplier?: number;
-};
-
-type WorkflowExecutionContext = {
-  workflowRunId: string;
-  profile: string;
-  invokeTool(toolName: string, args: Record<string, unknown>): Promise<unknown>;
-  emitSpan(name: string, attrs?: Record<string, unknown>): void;
-  emitMetric(
-    name: string,
-    value: number,
-    type: 'counter' | 'gauge' | 'histogram',
-    attrs?: Record<string, unknown>,
-  ): void;
-  getConfig<T = unknown>(path: string, fallback?: T): T;
-};
-
-type ToolNode = {
-  kind: 'tool';
-  id: string;
-  toolName: string;
-  input?: Record<string, unknown>;
-  timeoutMs?: number;
-  retry?: RetryPolicy;
-};
-
-type SequenceNode = {
-  kind: 'sequence';
-  id: string;
-  steps: WorkflowNode[];
-};
-
-type BranchNode = {
-  kind: 'branch';
-  id: string;
-  predicateId: string;
-  predicateFn?: (ctx: WorkflowExecutionContext) => boolean | Promise<boolean>;
-  whenTrue: WorkflowNode;
-  whenFalse?: WorkflowNode;
-};
-
-type WorkflowNode = ToolNode | SequenceNode | BranchNode;
-
-type WorkflowContract = {
-  kind: 'workflow-contract';
-  version: 1;
-  id: string;
-  displayName: string;
-  description?: string;
-  tags?: string[];
-  timeoutMs?: number;
-  defaultMaxConcurrency?: number;
-  build(ctx: WorkflowExecutionContext): WorkflowNode;
-  onStart?(ctx: WorkflowExecutionContext): Promise<void> | void;
-  onFinish?(ctx: WorkflowExecutionContext, result: unknown): Promise<void> | void;
-  onError?(ctx: WorkflowExecutionContext, error: Error): Promise<void> | void;
-};
-
-function toolNode(
-  id: string,
-  toolName: string,
-  options?: { input?: Record<string, unknown>; retry?: RetryPolicy; timeoutMs?: number },
-): ToolNode {
-  return {
-    kind: 'tool',
-    id,
-    toolName,
-    input: options?.input,
-    retry: options?.retry,
-    timeoutMs: options?.timeoutMs,
-  };
-}
-
-function sequenceNode(id: string, steps: WorkflowNode[]): SequenceNode {
-  return { kind: 'sequence', id, steps };
-}
-
-function branchNode(
-  id: string,
-  predicateId: string,
-  whenTrue: WorkflowNode,
-  whenFalse: WorkflowNode | undefined,
-  predicateFn?: (ctx: WorkflowExecutionContext) => boolean | Promise<boolean>,
-): BranchNode {
-  return { kind: 'branch', id, predicateId, predicateFn, whenTrue, whenFalse };
-}
+import type { WorkflowContract, WorkflowExecutionContext } from '@jshookmcp/extension-sdk/workflow';
+import { toolNode, sequenceNode, branchNode } from '@jshookmcp/extension-sdk/workflow';
 
 const DISCOVERY_PATHS = [
   '/docs',
@@ -133,61 +46,44 @@ const apiProbeBatchWorkflow: WorkflowContract = {
     );
     const runAuthExtract = ctx.getConfig<boolean>('workflows.apiProbe.runAuthExtract', true);
 
-    const authBranch = branchNode(
-      'maybe-auth-extract',
-      'api_probe_run_auth_extract',
-      toolNode('auth-extract', 'page_script_run', {
-        input: { name: 'auth_extract' },
-      }),
-      toolNode('skip-auth-extract', 'console_execute', {
-        input: {
+    return sequenceNode('api-probe-batch-root')
+      .step(toolNode('navigate-app-origin', 'page_navigate').input({
+        url: appUrl,
+        waitUntil: 'domcontentloaded',
+        enableNetworkMonitoring: true,
+      }))
+      .step(branchNode('maybe-auth-extract', 'api_probe_run_auth_extract')
+        .predicateFn(() => runAuthExtract)
+        .whenTrue(toolNode('auth-extract', 'page_script_run').input({ name: 'auth_extract' }))
+        .whenFalse(toolNode('skip-auth-extract', 'console_execute').input({
           expression: '({ skipped: true, step: "auth_extract", reason: "config_disabled" })',
-        },
-      }),
-      () => runAuthExtract,
-    );
-
-    return sequenceNode('api-probe-batch-root', [
-      toolNode('navigate-app-origin', 'page_navigate', {
-        input: {
-          url: appUrl,
-          waitUntil: 'domcontentloaded',
-          enableNetworkMonitoring: true,
-        },
-      }),
-      authBranch,
-      toolNode('probe-openapi-discovery', 'api_probe_batch', {
-        input: {
+        })))
+      .step(toolNode('probe-openapi-discovery', 'api_probe_batch').input({
+        baseUrl,
+        method,
+        autoInjectAuth,
+        maxBodySnippetLength,
+        includeBodyStatuses,
+        paths: [...DISCOVERY_PATHS],
+      }))
+      .step(toolNode('probe-business-endpoints', 'api_probe_batch').input({
+        baseUrl,
+        method,
+        autoInjectAuth,
+        maxBodySnippetLength,
+        includeBodyStatuses,
+        paths: targetPaths,
+      }))
+      .step(toolNode('emit-summary', 'console_execute').input({
+        expression: `(${JSON.stringify({
+          status: 'api_probe_complete',
+          order: ['navigate', 'auth_extract', 'discovery', 'target'],
+          appUrl,
           baseUrl,
-          method,
-          autoInjectAuth,
-          maxBodySnippetLength,
-          includeBodyStatuses,
-          paths: [...DISCOVERY_PATHS],
-        },
-      }),
-      toolNode('probe-business-endpoints', 'api_probe_batch', {
-        input: {
-          baseUrl,
-          method,
-          autoInjectAuth,
-          maxBodySnippetLength,
-          includeBodyStatuses,
-          paths: targetPaths,
-        },
-      }),
-      toolNode('emit-summary', 'console_execute', {
-        input: {
-          expression: `(${JSON.stringify({
-            status: 'api_probe_complete',
-            order: ['navigate', 'auth_extract', 'discovery', 'target'],
-            appUrl,
-            baseUrl,
-            targetPaths,
-          })})`,
-        },
-      }),
-    ]);
+          targetPaths,
+        })})`,
+      }))
+      .build();
   },
 
   onStart(ctx) {
